@@ -33,28 +33,37 @@
 
 ---
 
-## Phase 2 — Core API (Create & Redirect)
+## Phase 2 — Core API (Create & Redirect) ✅
 
-**Goal**: Users can shorten a URL and be redirected using the short code. No cache yet.
+**Goal**: Users can shorten a URL and be redirected using the short code. Redis cache-aside included.
 
 ### Tasks
-- [ ] `POST /urls` — accept `{ original_url, custom_alias?, expires_at? }`, return `{ short_url }`
+- [x] `POST /urls` — accept `{ original_url, custom_alias?, expires_at? }`, return `{ short_url }`
   - Validate that `original_url` is a real URL (`class-validator` `@IsUrl`)
-  - Short code generation: Redis `INCR url:counter` → base62 encode the integer
-  - If `custom_alias` provided, use it directly (check uniqueness in DB)
+  - Short code generation: Redis `INCR url:counter` → Knuth shuffle → base62 encode
+  - If `custom_alias` provided, use it directly; return `409 Conflict` if taken
   - Create a corresponding `url_stats` row (click_count = 0) in the same transaction
-- [ ] `GET /:code` — look up short_code in DB, respond `302` with `Location` header
+- [x] `GET /:code` — cache-aside lookup (Redis first, Postgres on miss), respond `302`
   - Return `410 Gone` if not found, `is_active = false`, or past `expires_at`
-- [ ] `DELETE /urls/:id` — soft-delete (`is_active = false`)
+- [x] `DELETE /urls/:id` — soft-delete: Redis DEL first, then Postgres `is_active = false`
+- [x] Global `ValidationPipe` registered in `main.ts` (`whitelist: true, transform: true`)
+- [x] Global `RedisModule` wired as NestJS provider (`REDIS_CLIENT` injection token)
 
-### Key Decisions Already Made
-- **302** (not 301) so browser doesn't cache and every redirect hits our server — required for click tracking
-- **No auth** on `POST /urls`; `DELETE` can be open for now too (will revisit in hardening phase)
-- **Collision-free** by design — Redis counter is monotonically increasing, no retry logic needed
+### Module Structure
+- **Monolith** with two independently testable modules:
+  - `UrlsModule` — `POST /urls`, `DELETE /urls/:id`; exports `UrlsService`
+  - `RedirectModule` — `GET /:code`; imports `UrlsModule`, delegates DB/cache to `UrlsService`
+- Single `Url` repository owned by `UrlsModule`; `RedirectModule` never touches it directly
 
-### Key Decision to Discuss Before Building
-- What NestJS module structure will you use? (`UrlsModule`, `RedirectModule` separate, or combined?)
-- Should `POST /urls` accept an `expires_at` field? Your API spec from discussions included it via Hello Interview notes.
+### Decisions Made
+- **302** (not 301) — browser must not cache; every redirect must hit the server for click tracking
+- **No auth** on any endpoint — `user_id` nullable; will revisit in Phase 5 hardening
+- **`expires_at` default** — `null` = lives forever; expiry check: `expires_at !== null && expires_at < now`
+- **Custom alias conflict** — `409 Conflict` (explicit, no silent fallback)
+- **Short code generation** — Redis `INCR` → Knuth multiplicative shuffle (`counter × 2147483647 mod SPACE_SIZE`) → base62 encode with `62^6` offset → always 7 chars, looks random, bijective (no collisions)
+- **Cache TTL** — expiring URLs: `expires_at - now` seconds; permanent URLs: no TTL
+- **Cache invalidation on delete** — Redis DEL before Postgres update (fail-safe ordering)
+- **Redis eviction policy** — `allkeys-lfu` (hot viral URLs stay cached; no-TTL keys must not be exempt)
 
 ---
 

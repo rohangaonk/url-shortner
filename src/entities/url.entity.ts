@@ -23,7 +23,12 @@ export class Url {
   @Column({ name: 'original_url', length: 2048 })
   originalUrl: string;
 
-  @Column({ name: 'custom_alias', type: 'varchar', length: 100, nullable: true })
+  @Column({
+    name: 'custom_alias',
+    type: 'varchar',
+    length: 100,
+    nullable: true,
+  })
   customAlias: string | null;
 
   @Column({ name: 'expires_at', type: 'timestamptz', nullable: true })
@@ -39,7 +44,10 @@ export class Url {
   @Column({ name: 'user_id', type: 'varchar', nullable: true })
   userId: string | null;
 
-  @ManyToOne(() => User, (user) => user.urls, { nullable: true, onDelete: 'SET NULL' })
+  @ManyToOne(() => User, (user) => user.urls, {
+    nullable: true,
+    onDelete: 'SET NULL',
+  })
   @JoinColumn({ name: 'user_id' })
   user: User | null;
 
