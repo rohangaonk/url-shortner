@@ -28,6 +28,7 @@ import { RedirectModule } from './redirect/redirect.module';
         entities: [User, Url, UrlStats],
         migrations: ['dist/migrations/*.js'],
         synchronize: false,
+        extra: { max: 50 },
       }),
     }),
     RedisModule,

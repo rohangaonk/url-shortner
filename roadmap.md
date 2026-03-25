@@ -82,7 +82,7 @@
 - [x] `Dockerfile` for NestJS app (multi-stage: build → production image)
 - [x] Update `docker-compose.yml` to include the app service alongside Postgres + Redis
 - [x] Health check endpoint: `GET /health`
-- [ ] Manual testing via Docker Compose (`docker compose up`, `curl http://localhost:3000/health`)
+- [x] Manual testing via Docker Compose (`docker compose up`, `curl http://localhost:3000/health`)
 
 ### Decisions Made
 

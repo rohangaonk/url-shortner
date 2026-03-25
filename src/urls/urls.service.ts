@@ -5,12 +5,11 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, Repository } from 'typeorm';
+import { QueryFailedError, Repository } from 'typeorm';
 import { ConfigService } from '@nestjs/config';
 import Redis from 'ioredis';
 
 import { Url } from '../entities/url.entity';
-import { UrlStats } from '../entities/url-stats.entity';
 import { CreateUrlDto } from './dto/create-url.dto';
 import { REDIS_CLIENT } from '../redis/redis.module';
 
@@ -47,7 +46,6 @@ export class UrlsService {
   constructor(
     @InjectRepository(Url)
     private readonly urlRepo: Repository<Url>,
-    private readonly dataSource: DataSource,
     private readonly config: ConfigService,
     @Inject(REDIS_CLIENT)
     private readonly redis: Redis,
@@ -55,20 +53,10 @@ export class UrlsService {
 
   async create(dto: CreateUrlDto): Promise<{ shortUrl: string }> {
     const shortCode = dto.customAlias ?? (await this.generateShortCode());
-
-    const existing = await this.urlRepo.findOne({ where: { shortCode } });
-    if (existing) {
-      throw new ConflictException(`Short code "${shortCode}" is already taken`);
-    }
-
     const expiresAt = dto.expiresAt ? new Date(dto.expiresAt) : null;
 
-    const queryRunner = this.dataSource.createQueryRunner();
-    await queryRunner.connect();
-    await queryRunner.startTransaction();
-
     try {
-      const url = queryRunner.manager.create(Url, {
+      const url = this.urlRepo.create({
         shortCode,
         originalUrl: dto.originalUrl,
         customAlias: dto.customAlias ?? null,
@@ -76,25 +64,21 @@ export class UrlsService {
         isActive: true,
         userId: null,
       });
-      await queryRunner.manager.save(url);
-
-      const stats = queryRunner.manager.create(UrlStats, {
-        urlId: url.id,
-        clickCount: 0,
-        lastAccessedAt: null,
-      });
-      await queryRunner.manager.save(stats);
-
-      await queryRunner.commitTransaction();
-
-      const baseUrl = this.config.get<string>('app.baseUrl');
-      return { shortUrl: `${baseUrl}/${shortCode}` };
+      await this.urlRepo.save(url);
     } catch (e) {
-      await queryRunner.rollbackTransaction();
+      if (
+        e instanceof QueryFailedError &&
+        (e as QueryFailedError & { code: string }).code === '23505'
+      ) {
+        throw new ConflictException(
+          `Short code "${shortCode}" is already taken`,
+        );
+      }
       throw e;
-    } finally {
-      await queryRunner.release();
     }
+
+    const baseUrl = this.config.get<string>('app.baseUrl');
+    return { shortUrl: `${baseUrl}/${shortCode}` };
   }
 
   async findByShortCode(shortCode: string): Promise<Url | null> {
