@@ -73,50 +73,31 @@
 
 ---
 
-## Phase 3 — Redis: Caching & Click Counter Flush
-
-**Goal**: Redirect latency drops significantly. Click counts land in Postgres without hammering it.
-
-### Tasks
-
-- [ ] Integrate `ioredis` as a NestJS provider (already installed)
-- [ ] **Cache-aside** on `GET /:code`:
-  - Check Redis first (`url:{shortCode}` → original_url)
-  - On miss: query Postgres, populate cache with TTL ≤ `expires_at`
-  - Cache invalidation on `DELETE`: explicitly `DEL url:{shortCode}`
-- [ ] **Click tracking** on `GET /:code` (fire-and-forget):
-  - `INCR stats:{shortCode}:count`
-  - `SET stats:{shortCode}:last_accessed <ISO timestamp>`
-- [ ] **Flush job** (NestJS `@Interval`, every ~1s):
-  - `SCAN` for `stats:*:count` keys
-  - Bulk `UPDATE url_stats SET click_count = click_count + $delta, last_accessed_at = $ts`
-  - Delete processed Redis keys
-- [ ] Decide eviction policy: `allkeys-lru` vs `volatile-lru`
-
-### Key Decision to Discuss
-
-- `allkeys-lru` evicts any key when memory is full. `volatile-lru` only evicts keys with a TTL set. Which is safer for our mix of cache keys and counter keys?
-- What happens to unflushed counter keys if the app crashes mid-interval?
-
----
-
-## Phase 4 — Docker & Local Hardening
+## Phase 3 — Docker & Local Hardening ✅
 
 **Goal**: Full system runs identically in Docker. Ready for cloud deployment.
 
 ### Tasks
 
-- [ ] `Dockerfile` for NestJS app (multi-stage: build → production image)
-- [ ] Update `docker-compose.yml` to include the app service alongside Postgres + Redis
-- [ ] Health check endpoint: `GET /health`
-- [ ] Graceful shutdown: drain in-flight requests, flush Redis counters to Postgres before exit
-- [ ] Rate limiting on `POST /urls` (`@nestjs/throttler`) to prevent spam
-- [ ] Input sanitization: reject known malicious URL patterns (basic blocklist)
-- [ ] Integration tests for happy path + edge cases (expired URL, collision, invalid URL)
+- [x] `Dockerfile` for NestJS app (multi-stage: build → production image)
+- [x] Update `docker-compose.yml` to include the app service alongside Postgres + Redis
+- [x] Health check endpoint: `GET /health`
+- [ ] Manual testing via Docker Compose (`docker compose up`, `curl http://localhost:3000/health`)
+
+### Decisions Made
+
+- **Multi-stage build** — builder stage: full Alpine + all deps + `nest build`; production stage: fresh Alpine + `npm ci --omit=dev` + `dist/` only
+- **Base image** — `node:20-alpine` (pure-JS deps, no native addon risk)
+- **`.dockerignore`** — excludes `.env`, `node_modules/`, `dist/` (secrets never baked into image)
+- **`depends_on: condition: service_healthy`** — app waits for Postgres and Redis healthchecks before starting; plain `depends_on` is not sufficient
+- **Hostname resolution** — inside Docker network, services reach each other by service name (`DB_HOST=postgres`, `REDIS_HOST=redis`); `.env` must reflect this at runtime
+- **Secrets** — injected at runtime via `env_file: .env`; never baked into the image. Secrets Manager deferred to Phase 4 (AWS)
+- **`CMD`** — `node dist/src/main` (not `dist/main`) because `data-source.ts` at project root causes TypeScript to infer `rootDir` as `.`, mirroring folder structure in `dist/`
+- **`/health` route ordering** — lives in a dedicated `HealthModule` imported before `RedirectModule`; NestJS registers routes depth-first so `GET /:code` would otherwise shadow it
 
 ---
 
-## Phase 5 — AWS Deployment (ECS Fargate)
+## Phase 4 — AWS Deployment (ECS Fargate)
 
 **Goal**: Production-grade deployment on AWS. App talks to RDS + ElastiCache instead of local containers.
 
@@ -149,7 +130,7 @@ Internet → ALB → ECS Fargate (NestJS tasks) → RDS Postgres (Multi-AZ)
 
 ---
 
-## Phase 6 — CDN Layer (CloudFront + Lambda@Edge)
+## Phase 5 — CDN Layer (CloudFront + Lambda@Edge)
 
 **Goal**: Sub-100ms redirects globally by serving redirect logic at the CDN edge.
 

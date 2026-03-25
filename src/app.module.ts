@@ -7,6 +7,7 @@ import { Url } from './entities/url.entity';
 import { UrlStats } from './entities/url-stats.entity';
 import { RedisModule } from './redis/redis.module';
 import { UrlsModule } from './urls/urls.module';
+import { HealthModule } from './health/health.module';
 import { RedirectModule } from './redirect/redirect.module';
 
 @Module({
@@ -31,6 +32,7 @@ import { RedirectModule } from './redirect/redirect.module';
     }),
     RedisModule,
     UrlsModule,
+    HealthModule,
     RedirectModule,
   ],
 })
