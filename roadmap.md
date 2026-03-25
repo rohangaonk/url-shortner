@@ -1,6 +1,7 @@
 # URL Shortener — Implementation Roadmap
 
 ## Stack
+
 - **API**: NestJS (TypeScript)
 - **Database**: PostgreSQL (local → AWS RDS)
 - **Cache**: Redis (local → AWS ElastiCache Redis Cluster)
@@ -14,6 +15,7 @@
 **Goal**: Working NestJS project with database schema and migrations in place. No business logic yet.
 
 ### Tasks
+
 - [x] Initialize NestJS app with `@nestjs/config`, `@nestjs/typeorm`, `pg`, `ioredis`, `class-validator`
 - [x] `docker-compose.yml` with Postgres + Redis containers for local development
 - [x] Design and migrate the core schema:
@@ -24,6 +26,7 @@
 - [x] TypeORM migrations setup via `data-source.ts`; initial migration applied
 
 ### Decisions Made
+
 - **ORM**: TypeORM (native NestJS module integration)
 - **HTTP adapter**: Express (Fastify dropped — ecosystem friction not worth sub-ms gains given Redis is the real bottleneck)
 - **Short code generation**: Redis `INCR` → base62 encode. No batching needed — write throughput is ~1 RPS avg, direct `INCR` per request is fine
@@ -38,6 +41,7 @@
 **Goal**: Users can shorten a URL and be redirected using the short code. Redis cache-aside included.
 
 ### Tasks
+
 - [x] `POST /urls` — accept `{ original_url, custom_alias?, expires_at? }`, return `{ short_url }`
   - Validate that `original_url` is a real URL (`class-validator` `@IsUrl`)
   - Short code generation: Redis `INCR url:counter` → Knuth shuffle → base62 encode
@@ -50,12 +54,14 @@
 - [x] Global `RedisModule` wired as NestJS provider (`REDIS_CLIENT` injection token)
 
 ### Module Structure
+
 - **Monolith** with two independently testable modules:
   - `UrlsModule` — `POST /urls`, `DELETE /urls/:id`; exports `UrlsService`
   - `RedirectModule` — `GET /:code`; imports `UrlsModule`, delegates DB/cache to `UrlsService`
 - Single `Url` repository owned by `UrlsModule`; `RedirectModule` never touches it directly
 
 ### Decisions Made
+
 - **302** (not 301) — browser must not cache; every redirect must hit the server for click tracking
 - **No auth** on any endpoint — `user_id` nullable; will revisit in Phase 5 hardening
 - **`expires_at` default** — `null` = lives forever; expiry check: `expires_at !== null && expires_at < now`
@@ -72,6 +78,7 @@
 **Goal**: Redirect latency drops significantly. Click counts land in Postgres without hammering it.
 
 ### Tasks
+
 - [ ] Integrate `ioredis` as a NestJS provider (already installed)
 - [ ] **Cache-aside** on `GET /:code`:
   - Check Redis first (`url:{shortCode}` → original_url)
@@ -87,32 +94,18 @@
 - [ ] Decide eviction policy: `allkeys-lru` vs `volatile-lru`
 
 ### Key Decision to Discuss
+
 - `allkeys-lru` evicts any key when memory is full. `volatile-lru` only evicts keys with a TTL set. Which is safer for our mix of cache keys and counter keys?
 - What happens to unflushed counter keys if the app crashes mid-interval?
 
 ---
 
-## Phase 4 — Analytics
-
-**Goal**: Users can see click counts and last accessed time per URL.
-
-### Tasks
-- [ ] `GET /urls/:id/analytics` — return `{ clicks: number, last_accessed_at: Date }`
-  - Read from `url_stats` table (Postgres)
-  - Optionally blend with unflushed Redis counter for fresher data
-
-### Decisions Already Made
-- Per-click row table rejected — too write-heavy at scale
-- `url_stats` (one row per URL) is the source of truth, hydrated by the Phase 3 flush job
-- Eventually consistent is acceptable for click counts
-
----
-
-## Phase 5 — Docker & Local Hardening
+## Phase 4 — Docker & Local Hardening
 
 **Goal**: Full system runs identically in Docker. Ready for cloud deployment.
 
 ### Tasks
+
 - [ ] `Dockerfile` for NestJS app (multi-stage: build → production image)
 - [ ] Update `docker-compose.yml` to include the app service alongside Postgres + Redis
 - [ ] Health check endpoint: `GET /health`
@@ -123,17 +116,19 @@
 
 ---
 
-## Phase 6 — AWS Deployment (ECS Fargate)
+## Phase 5 — AWS Deployment (ECS Fargate)
 
 **Goal**: Production-grade deployment on AWS. App talks to RDS + ElastiCache instead of local containers.
 
 ### Architecture
+
 ```
 Internet → ALB → ECS Fargate (NestJS tasks) → RDS Postgres (Multi-AZ)
                                              → ElastiCache Redis (Cluster mode)
 ```
 
 ### Tasks
+
 - [ ] Push Docker image to **AWS ECR**
 - [ ] Provision **RDS Postgres** (Multi-AZ for HA, automated backups enabled)
 - [ ] Provision **ElastiCache Redis Cluster** (cluster mode for horizontal scaling)
@@ -147,22 +142,25 @@ Internet → ALB → ECS Fargate (NestJS tasks) → RDS Postgres (Multi-AZ)
 - [ ] CI/CD pipeline (GitHub Actions): test → build → push to ECR → deploy to ECS
 
 ### Key Decision to Discuss
+
 - RDS Multi-AZ vs Read Replica — when does each matter for us?
 - How does Redis Cluster mode change key routing? (hint: hash slots — does this affect our batch counter approach?)
 - What's your approach to zero-downtime deployments on ECS?
 
 ---
 
-## Phase 7 — CDN Layer (CloudFront + Lambda@Edge)
+## Phase 6 — CDN Layer (CloudFront + Lambda@Edge)
 
 **Goal**: Sub-100ms redirects globally by serving redirect logic at the CDN edge.
 
 ### Architecture
+
 ```
 User → CloudFront → Lambda@Edge (redirect logic) → Origin (ALB/ECS) on cache miss
 ```
 
 ### Tasks
+
 - [ ] Configure **CloudFront distribution** in front of the ALB
 - [ ] Write **Lambda@Edge** (Viewer Request trigger) for redirect:
   - On `GET /:code`, check CloudFront cache
@@ -178,6 +176,7 @@ User → CloudFront → Lambda@Edge (redirect logic) → Origin (ALB/ECS) on cac
 - [ ] Custom domain on CloudFront (e.g., `short.ly`)
 
 ### Key Decision to Discuss
+
 - Lambda@Edge has constraints: no env vars natively, cold starts, limited memory. Does this change our redirect logic design?
 - A URL gets deleted. It's cached at 200 edge locations. How do you ensure users aren't redirected to a dead URL? How fast can you guarantee propagation?
 - CDN caching means some clicks bypass your server. Is an accurate click count a hard requirement?
@@ -186,12 +185,11 @@ User → CloudFront → Lambda@Edge (redirect logic) → Origin (ALB/ECS) on cac
 
 ## Milestones Summary
 
-| Phase | Deliverable | Local/Cloud |
-|-------|------------|-------------|
-| 1 | Project scaffold + schema | Local |
-| 2 | Create + Redirect + Auth API | Local |
-| 3 | Redis caching + counter | Local |
-| 4 | Analytics endpoint | Local |
-| 5 | Dockerized, hardened app | Local |
-| 6 | ECS Fargate + RDS + ElastiCache | AWS |
-| 7 | CloudFront + Lambda@Edge CDN | AWS |
+| Phase | Deliverable                     | Local/Cloud |
+| ----- | ------------------------------- | ----------- |
+| 1     | Project scaffold + schema       | Local       |
+| 2     | Create + Redirect + Auth API    | Local       |
+| 3     | Redis caching + counter         | Local       |
+| 4     | Dockerized, hardened app        | Local       |
+| 5     | ECS Fargate + RDS + ElastiCache | AWS         |
+| 6     | CloudFront + Lambda@Edge CDN    | AWS         |
