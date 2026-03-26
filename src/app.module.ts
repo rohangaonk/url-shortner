@@ -29,6 +29,11 @@ import { RedirectModule } from './redirect/redirect.module';
         migrations: ['dist/migrations/*.js'],
         synchronize: false,
         extra: { max: 50 },
+        // RDS requires SSL; rejectUnauthorized false avoids bundling the CA cert
+        ssl:
+          config.get('app.nodeEnv') === 'production'
+            ? { rejectUnauthorized: false }
+            : false,
       }),
     }),
     RedisModule,
